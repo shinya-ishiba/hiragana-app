@@ -533,16 +533,19 @@ function startDemo() {
 let drawing = false;
 let lastX = 0, lastY = 0;
 let currentDevPts = [];
+let coveredPts = [];               // この指ストロークでなぞれた中心線サンプル
 let moveSamples = 0, nearSamples = 0;
 
-function nearestDist(x, y, devPts) {
-  let min = Infinity;
-  for (const [px, py] of devPts) {
-    const dx = x - px, dy = y - py;
-    const d = dx * dx + dy * dy;
-    if (d < min) min = d;
+function markNear(x, y, tol) {
+  // 指の現在位置に近い中心線サンプルを「なぞれた」と記録し、
+  // どれか1つでも許容内なら true
+  const tol2 = tol * tol;
+  let near = false;
+  for (let i = 0; i < currentDevPts.length; i++) {
+    const dx = x - currentDevPts[i][0], dy = y - currentDevPts[i][1];
+    if (dx * dx + dy * dy <= tol2) { coveredPts[i] = true; near = true; }
   }
-  return Math.sqrt(min);
+  return near;
 }
 
 function pos(e) {
@@ -561,8 +564,9 @@ function startStroke(e) {
   [lastX, lastY] = pos(e);
   strokeIndex++;
   currentDevPts = (strokePts[currentStroke] || []).map(([x, y]) => glyphToDevice(x, y));
-  moveSamples = 0;
-  nearSamples = 0;
+  coveredPts = new Array(currentDevPts.length).fill(false);
+  moveSamples = 1;
+  nearSamples = markNear(lastX, lastY, cssSize * 0.09 * dpr) ? 1 : 0;
   drawCtx.lineWidth = cssSize * 0.075 * dpr;
   drawCtx.lineCap = "round";
   drawCtx.lineJoin = "round";
@@ -584,8 +588,8 @@ function moveStroke(e) {
   [lastX, lastY] = [x, y];
 
   moveSamples++;
-  const tolMove = cssSize * 0.14 * dpr; // 線からどれだけ離れてもOKか（なぞりの許容範囲）
-  if (currentDevPts.length && nearestDist(x, y, currentDevPts) <= tolMove) nearSamples++;
+  const tolMove = cssSize * 0.09 * dpr; // 線からどれだけ離れてもOKか（なぞりの許容範囲）
+  if (markNear(x, y, tolMove)) nearSamples++;
 }
 
 function endStroke() {
@@ -605,22 +609,13 @@ drawCanvas.addEventListener("mouseleave", endStroke);
 // ---------- いまの画をなぞれたかな？判定 ----------
 function checkStroke() {
   if (done || currentStroke >= strokePts.length) return;
-  const img = drawCtx.getImageData(0, 0, drawCanvas.width, drawCanvas.height).data;
-  const w = drawCanvas.width, h = drawCanvas.height;
-  const tol = Math.round(8 * dpr); // 中心線から多少ずれてもOK
-  const offsets = [[0, 0], [tol, 0], [-tol, 0], [0, tol], [0, -tol]];
-  const pts = strokePts[currentStroke];
-  let hit = 0;
-  for (const [gx, gy] of pts) {
-    const [cx, cy] = glyphToDevice(gx, gy);
-    for (const [ox, oy] of offsets) {
-      const x = Math.round(cx + ox), y = Math.round(cy + oy);
-      if (x < 0 || y < 0 || x >= w || y >= h) continue;
-      if (img[(y * w + x) * 4 + 3] > 0) { hit++; break; }
-    }
-  }
-  const followedGuide = moveSamples === 0 || (nearSamples / moveSamples) >= 0.6;
-  if (hit / pts.length >= 0.7 && followedGuide) {
+  // 今回の指ストロークだけで判定する（塗りつぶしの蓄積は効かない）
+  // 1. coverage: この画の中心線サンプルのうち、指が近くを通った割合
+  // 2. followedGuide: 指の動きのうち、線の近くにいた割合
+  const covered = coveredPts.filter(Boolean).length;
+  const coverage = coveredPts.length ? covered / coveredPts.length : 0;
+  const followedGuide = moveSamples === 0 || (nearSamples / moveSamples) >= 0.7;
+  if (coverage >= 0.8 && followedGuide) {
     currentStroke++;
     if (currentStroke >= strokePts.length) {
       done = true;
