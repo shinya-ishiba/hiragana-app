@@ -532,6 +532,18 @@ function startDemo() {
 // ---------- ゆびで なぞる ----------
 let drawing = false;
 let lastX = 0, lastY = 0;
+let currentDevPts = [];
+let moveSamples = 0, nearSamples = 0;
+
+function nearestDist(x, y, devPts) {
+  let min = Infinity;
+  for (const [px, py] of devPts) {
+    const dx = x - px, dy = y - py;
+    const d = dx * dx + dy * dy;
+    if (d < min) min = d;
+  }
+  return Math.sqrt(min);
+}
 
 function pos(e) {
   const rect = drawCanvas.getBoundingClientRect();
@@ -548,6 +560,9 @@ function startStroke(e) {
   drawing = true;
   [lastX, lastY] = pos(e);
   strokeIndex++;
+  currentDevPts = (strokePts[currentStroke] || []).map(([x, y]) => glyphToDevice(x, y));
+  moveSamples = 0;
+  nearSamples = 0;
   drawCtx.lineWidth = cssSize * 0.075 * dpr;
   drawCtx.lineCap = "round";
   drawCtx.lineJoin = "round";
@@ -567,6 +582,10 @@ function moveStroke(e) {
   drawCtx.lineTo(x, y);
   drawCtx.stroke();
   [lastX, lastY] = [x, y];
+
+  moveSamples++;
+  const tolMove = cssSize * 0.14 * dpr; // 線からどれだけ離れてもOKか（なぞりの許容範囲）
+  if (currentDevPts.length && nearestDist(x, y, currentDevPts) <= tolMove) nearSamples++;
 }
 
 function endStroke() {
@@ -600,7 +619,8 @@ function checkStroke() {
       if (img[(y * w + x) * 4 + 3] > 0) { hit++; break; }
     }
   }
-  if (hit / pts.length >= 0.7) {
+  const followedGuide = moveSamples === 0 || (nearSamples / moveSamples) >= 0.6;
+  if (hit / pts.length >= 0.7 && followedGuide) {
     currentStroke++;
     if (currentStroke >= strokePts.length) {
       done = true;
